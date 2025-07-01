@@ -42,6 +42,7 @@ export const orderItems = pgTable("order_items", {
   clothingSetId: integer("clothing_set_id").references(() => clothingSets.id).notNull(),
   quantity: integer("quantity").notNull().default(1),
   pricePerDay: decimal("price_per_day", { precision: 10, scale: 2 }).notNull(),
+  totalPrice: decimal("total_price", { precision: 10, scale: 2 }).notNull(),
 });
 
 export const insertClothingSetSchema = createInsertSchema(clothingSets).omit({

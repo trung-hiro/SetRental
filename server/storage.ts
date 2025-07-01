@@ -13,6 +13,9 @@ import {
   type Category,
   type InsertCategory
 } from "@shared/schema";
+import { drizzle } from 'drizzle-orm/neon-http';
+import { neon } from '@neondatabase/serverless';
+import { eq, and, gte, lte, sum, count } from 'drizzle-orm';
 
 export interface IStorage {
   // Categories
@@ -346,4 +349,249 @@ export class MemStorage implements IStorage {
   }
 }
 
-export const storage = new MemStorage();
+// Database storage implementation using PostgreSQL
+export class DatabaseStorage implements IStorage {
+  private db: any;
+
+  constructor() {
+    const sql = neon(process.env.DATABASE_URL!);
+    this.db = drizzle(sql);
+  }
+
+  // Categories methods
+  async getCategories(): Promise<Category[]> {
+    const result = await this.db.select().from(categories).where(eq(categories.isActive, true));
+    return result;
+  }
+
+  async getCategory(id: number): Promise<Category | undefined> {
+    const result = await this.db.select().from(categories).where(eq(categories.id, id));
+    return result[0];
+  }
+
+  async createCategory(category: InsertCategory): Promise<Category> {
+    const result = await this.db.insert(categories).values({
+      ...category,
+      isActive: true,
+      createdAt: new Date()
+    }).returning();
+    return result[0];
+  }
+
+  async updateCategory(id: number, category: Partial<InsertCategory>): Promise<Category | undefined> {
+    const result = await this.db.update(categories)
+      .set(category)
+      .where(eq(categories.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteCategory(id: number): Promise<boolean> {
+    const result = await this.db.update(categories)
+      .set({ isActive: false })
+      .where(eq(categories.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  // Clothing Sets methods
+  async getClothingSets(): Promise<ClothingSet[]> {
+    const result = await this.db.select().from(clothingSets).where(eq(clothingSets.isActive, true));
+    return result;
+  }
+
+  async getClothingSet(id: number): Promise<ClothingSet | undefined> {
+    const result = await this.db.select().from(clothingSets).where(eq(clothingSets.id, id));
+    return result[0];
+  }
+
+  async createClothingSet(set: InsertClothingSet): Promise<ClothingSet> {
+    const result = await this.db.insert(clothingSets).values({
+      ...set,
+      isActive: true,
+      createdAt: new Date()
+    }).returning();
+    return result[0];
+  }
+
+  async updateClothingSet(id: number, set: Partial<InsertClothingSet>): Promise<ClothingSet | undefined> {
+    const result = await this.db.update(clothingSets)
+      .set(set)
+      .where(eq(clothingSets.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteClothingSet(id: number): Promise<boolean> {
+    const result = await this.db.update(clothingSets)
+      .set({ isActive: false })
+      .where(eq(clothingSets.id, id))
+      .returning();
+    return result.length > 0;
+  }
+
+  // Orders methods
+  async getOrders(): Promise<OrderWithItems[]> {
+    const ordersResult = await this.db.select().from(orders);
+    const ordersWithItems: OrderWithItems[] = [];
+
+    for (const order of ordersResult) {
+      const itemsResult = await this.db
+        .select({
+          id: orderItems.id,
+          orderId: orderItems.orderId,
+          clothingSetId: orderItems.clothingSetId,
+          quantity: orderItems.quantity,
+          pricePerDay: orderItems.pricePerDay,
+          totalPrice: orderItems.totalPrice,
+          clothingSet: clothingSets
+        })
+        .from(orderItems)
+        .leftJoin(clothingSets, eq(orderItems.clothingSetId, clothingSets.id))
+        .where(eq(orderItems.orderId, order.id));
+
+      ordersWithItems.push({
+        ...order,
+        items: itemsResult
+      });
+    }
+
+    return ordersWithItems;
+  }
+
+  async getOrder(id: number): Promise<OrderWithItems | undefined> {
+    const orderResult = await this.db.select().from(orders).where(eq(orders.id, id));
+    if (orderResult.length === 0) return undefined;
+
+    const order = orderResult[0];
+    const itemsResult = await this.db
+      .select({
+        id: orderItems.id,
+        orderId: orderItems.orderId,
+        clothingSetId: orderItems.clothingSetId,
+        quantity: orderItems.quantity,
+        pricePerDay: orderItems.pricePerDay,
+        totalPrice: orderItems.totalPrice,
+        clothingSet: clothingSets
+      })
+      .from(orderItems)
+      .leftJoin(clothingSets, eq(orderItems.clothingSetId, clothingSets.id))
+      .where(eq(orderItems.orderId, id));
+
+    return {
+      ...order,
+      items: itemsResult
+    };
+  }
+
+  async createOrder(order: InsertOrder, items: InsertOrderItem[]): Promise<OrderWithItems> {
+    // Insert order
+    const orderResult = await this.db.insert(orders).values({
+      ...order,
+      createdAt: new Date()
+    }).returning();
+    
+    const newOrder = orderResult[0];
+
+    // Insert order items
+    const orderItemsData = items.map(item => ({
+      ...item,
+      orderId: newOrder.id
+    }));
+
+    const itemsResult = await this.db.insert(orderItems).values(orderItemsData).returning();
+
+    // Get clothing sets for items
+    const itemsWithClothingSets = [];
+    for (const item of itemsResult) {
+      const clothingSet = await this.getClothingSet(item.clothingSetId);
+      itemsWithClothingSets.push({
+        ...item,
+        clothingSet: clothingSet!
+      });
+    }
+
+    return {
+      ...newOrder,
+      items: itemsWithClothingSets
+    };
+  }
+
+  async updateOrderStatus(id: number, status: string): Promise<Order | undefined> {
+    const result = await this.db.update(orders)
+      .set({ status })
+      .where(eq(orders.id, id))
+      .returning();
+    return result[0];
+  }
+
+  // Inventory methods
+  async getAvailableQuantity(clothingSetId: number, startDate: Date, endDate: Date): Promise<number> {
+    const clothingSet = await this.getClothingSet(clothingSetId);
+    if (!clothingSet) return 0;
+
+    // Get booked quantities for overlapping date ranges
+    const bookedResult = await this.db
+      .select({ quantity: sum(orderItems.quantity) })
+      .from(orderItems)
+      .leftJoin(orders, eq(orderItems.orderId, orders.id))
+      .where(
+        and(
+          eq(orderItems.clothingSetId, clothingSetId),
+          gte(orders.endDate, startDate),
+          lte(orders.startDate, endDate),
+          eq(orders.status, 'confirmed')
+        )
+      );
+
+    const bookedQuantity = bookedResult[0]?.quantity || 0;
+    return Math.max(0, clothingSet.quantity - Number(bookedQuantity));
+  }
+
+  // Dashboard stats
+  async getDashboardStats(): Promise<{
+    totalSets: number;
+    activeRentals: number;
+    pendingReturns: number;
+    monthlyRevenue: number;
+  }> {
+    const totalSetsResult = await this.db
+      .select({ count: count() })
+      .from(clothingSets)
+      .where(eq(clothingSets.isActive, true));
+
+    const activeRentalsResult = await this.db
+      .select({ count: count() })
+      .from(orders)
+      .where(eq(orders.status, 'confirmed'));
+
+    const pendingReturnsResult = await this.db
+      .select({ count: count() })
+      .from(orders)
+      .where(eq(orders.status, 'pending_return'));
+
+    const currentMonth = new Date();
+    const firstDayOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1);
+    const lastDayOfMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0);
+
+    const monthlyRevenueResult = await this.db
+      .select({ total: sum(orders.totalAmount) })
+      .from(orders)
+      .where(
+        and(
+          gte(orders.createdAt, firstDayOfMonth),
+          lte(orders.createdAt, lastDayOfMonth),
+          eq(orders.status, 'confirmed')
+        )
+      );
+
+    return {
+      totalSets: totalSetsResult[0]?.count || 0,
+      activeRentals: activeRentalsResult[0]?.count || 0,
+      pendingReturns: pendingReturnsResult[0]?.count || 0,
+      monthlyRevenue: Number(monthlyRevenueResult[0]?.total || 0)
+    };
+  }
+}
+
+export const storage = new DatabaseStorage();
