@@ -33,5 +33,7 @@ export default defineConfig({
       strict: true,
       deny: ["**/.*"],
     },
+    host: true, // Allow external access (required for Render)
+    port: process.env.PORT || 3000, // Use Render's PORT environment variable
   },
 });
