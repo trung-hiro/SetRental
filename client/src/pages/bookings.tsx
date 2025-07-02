@@ -99,7 +99,8 @@ export default function Bookings() {
     if (!startDate || !endDate || !selectedSet) return 0;
 
     const days = calculateDaysBetween(startDate, endDate);
-    return parseFloat(selectedSet.pricePerDay) * days;
+    // return parseFloat(selectedSet.pricePerDay) * days;
+    return parseFloat(selectedSet.pricePerDay);
   };
 
   const getRentalDays = () => {
