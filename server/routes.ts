@@ -10,7 +10,7 @@ import path from "path";
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => {
-      cb(null, 'uploads/');
+      cb(null, '/uploads'); // ✅ dùng đường tuyệt đối — đúng mount path Disk trên Render
     },
     filename: (req, file, cb) => {
       const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
