@@ -284,7 +284,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         insertOrderItemSchema.parse({
           clothingSetId: item.clothingSetId,
           quantity: parseInt(item.quantity) || 1,
-          pricePerDay: item.pricePerDay.toString()
+          pricePerDay: item.pricePerDay.toString(),
+          totalPrice: item.pricePerDay.toString(),
         })
       );
 
