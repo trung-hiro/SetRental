@@ -65,6 +65,7 @@ export const insertOrderItemSchema = createInsertSchema(orderItems).omit({
   orderId: true,
 }).extend({
   pricePerDay: z.string(),
+  totalPrice: z.string()
 });
 
 export const insertCategorySchema = createInsertSchema(categories).omit({
